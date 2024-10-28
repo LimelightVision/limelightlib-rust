@@ -202,13 +202,3 @@ client.update_robot_orientation(45.0).await?; // 45 degree yaw
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Built for the Limelight Vision Processing System
-- Powered by Tokio async runtime
-- Uses reqwest for HTTP communication
-
