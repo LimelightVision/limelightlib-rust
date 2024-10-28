@@ -150,6 +150,57 @@ impl LimelightClient {
         tracing::debug!("Client stopped, running state set to false");
     }
 
+    async fn build_url(&self, endpoint: &str) -> String {
+        let config = self.config.read().await;
+        format!("http://{}:{}/{}", config.host, config.port, endpoint)
+    }
+
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T, LimelightError> {
+        let url = self.build_url(endpoint).await;
+        tracing::debug!("GET request to {}", url);
+        
+        let response = self.http_client
+            .get(&url)
+            .timeout(Duration::from_millis(100))
+            .send()
+            .await?
+            .json()
+            .await?;
+            
+        Ok(response)
+    }
+
+    async fn post_json<T: serde::Serialize + ?Sized>(
+        &self, 
+        endpoint: &str, 
+        data: &T,
+    ) -> Result<bool, LimelightError> {
+        let url = self.build_url(endpoint).await;
+        tracing::debug!("POST request to {}", url);
+        
+        let response = self.http_client
+            .post(&url)
+            .json(data)
+            .timeout(Duration::from_millis(100))
+            .send()
+            .await?;
+            
+        Ok(response.status().is_success())
+    }
+
+    async fn delete(&self, endpoint: &str) -> Result<bool, LimelightError> {
+        let url = self.build_url(endpoint).await;
+        tracing::debug!("DELETE request to {}", url);
+        
+        let response = self.http_client
+            .delete(&url)
+            .timeout(Duration::from_millis(100))
+            .send()
+            .await?;
+            
+        Ok(response.status().is_success())
+    }
+
     pub async fn get_latest_result(&self) -> Option<LimelightResult> {
         tracing::debug!("Getting latest result");
         let result = self.latest_result.read().await.clone();
@@ -201,123 +252,28 @@ impl LimelightClient {
         }
     }
 
-    pub async fn update_robot_orientation(&self, yaw: f64) -> Result<bool, LimelightError> {
-        let config = self.config.read().await;
-        let url = format!("http://{}:{}/update-robotorientation", config.host, config.port);
-        tracing::debug!("Updating robot orientation at URL: {}", url);
-        tracing::debug!("Orientation parameters: yaw={}", yaw);
-        
-        let orientation_data = vec![yaw, 0.0, 0.0, 0.0, 0.0, 0.0];
-        tracing::debug!("Full orientation data: {:?}", orientation_data);
-        
-        tracing::debug!("Sending POST request");
-        match self.http_client
-            .post(&url)
-            .json(&orientation_data)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await 
-        {
-            Ok(response) => {
-                let status = response.status();
-                tracing::debug!("Robot orientation update response status: {}", status);
-                let success = status.is_success();
-                tracing::debug!("Update {} (status code {})", 
-                    if success { "succeeded" } else { "failed" }, 
-                    status.as_u16());
-                Ok(success)
-            }
-            Err(e) => {
-                tracing::error!("Failed to update robot orientation: {:?}", e);
-                Err(e.into())
-            }
-        }
-    }
-
     pub async fn get_status(&self) -> Result<Value, LimelightError> {
-        let config = self.config.read().await;
-        let url = format!("http://{}:{}/status", config.host, config.port);
-        
-        tracing::debug!("Fetching status from {}", url);
-        let response = self.http_client
-            .get(&url)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?
-            .json()
-            .await?;
-            
-        Ok(response)
+        self.get_json("status").await
     }
 
     pub async fn reload_pipeline(&self) -> Result<bool, LimelightError> {
-        let config = self.config.read().await;
-        let url = format!("http://{}:{}/reload-pipeline", config.host, config.port);
-        
-        tracing::debug!("Reloading pipeline");
-        let response = self.http_client
-            .post(&url)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?;
-            
-        Ok(response.status().is_success())
+        self.post_json("reload-pipeline", &()).await
     }
 
     pub async fn switch_pipeline(&self, index: u32) -> Result<bool, LimelightError> {
-        let config = self.config.read().await;
-        let url = format!("http://{}:{}/pipeline-switch?index={}", config.host, config.port, index);
-        
-        tracing::debug!("Switching to pipeline index {}", index);
-        let response = self.http_client
-            .post(&url)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?;
-            
-        Ok(response.status().is_success())
+        self.post_json(&format!("pipeline-switch?index={}", index), &()).await
     }
 
     pub async fn capture_snapshot(&self, snapname: &str) -> Result<bool, LimelightError> {
-        let config = self.config.read().await;
-        let url = format!("http://{}:{}/capture-snapshot?snapname={}", config.host, config.port, snapname);
-        
-        tracing::debug!("Capturing snapshot with name: {}", snapname);
-        let response = self.http_client
-            .post(&url)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?;
-            
-        Ok(response.status().is_success())
+        self.post_json(&format!("capture-snapshot?snapname={}", snapname), &()).await
     }
 
     pub async fn delete_snapshots(&self) -> Result<bool, LimelightError> {
-        let config = self.config.read().await;
-        let url = format!("http://{}:{}/delete-snapshots", config.host, config.port);
-        
-        tracing::debug!("Deleting all snapshots");
-        let response = self.http_client
-            .delete(&url)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?;
-            
-        Ok(response.status().is_success())
+        self.delete("delete-snapshots").await
     }
 
     pub async fn delete_snapshot(&self, snapname: &str) -> Result<bool, LimelightError> {
-        let config = self.config.read().await;
-        let url = format!("http://{}:{}/delete-snapshot?snapname={}", config.host, config.port, snapname);
-        
-        tracing::debug!("Deleting snapshot: {}", snapname);
-        let response = self.http_client
-            .delete(&url)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?;
-            
-        Ok(response.status().is_success())
+        self.delete(&format!("delete-snapshot?snapname={}", snapname)).await
     }
 
     pub async fn update_python_inputs(&self, inputs: &[f64]) -> Result<bool, LimelightError> {
@@ -325,89 +281,149 @@ impl LimelightClient {
         if inputs.is_empty() || inputs.len() > MAX_INPUTS {
             return Err(LimelightError::ConfigError("Invalid number of Python inputs".into()));
         }
+        self.post_json("update-pythoninputs", inputs).await
+    }
 
-        let config = self.config.read().await;
-        let url = format!("http://{}:{}/update-pythoninputs", config.host, config.port);
-        
-        tracing::debug!("Updating Python inputs with {} values", inputs.len());
-        let response = self.http_client
-            .post(&url)
-            .json(inputs)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?;
-            
-        Ok(response.status().is_success())
+    pub async fn update_robot_orientation(&self, yaw: f64) -> Result<bool, LimelightError> {
+        let orientation_data = vec![yaw, 0.0, 0.0, 0.0, 0.0, 0.0];
+        self.post_json("update-robotorientation", &orientation_data).await
     }
 
     pub async fn upload_field_map(&self, field_map: Value, index: Option<u32>) -> Result<bool, LimelightError> {
-        let config = self.config.read().await;
-        let url = if let Some(idx) = index {
-            format!("http://{}:{}/upload-fieldmap?index={}", config.host, config.port, idx)
-        } else {
-            format!("http://{}:{}/upload-fieldmap", config.host, config.port)
+        let endpoint = match index {
+            Some(idx) => format!("upload-fieldmap?index={}", idx),
+            None => "upload-fieldmap".to_string(),
         };
-        
-        tracing::debug!("Uploading field map{}", if let Some(idx) = index { format!(" to index {}", idx) } else { "".to_string() });
-        let response = self.http_client
-            .post(&url)
-            .json(&field_map)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?;
-            
-        Ok(response.status().is_success())
-    }
-
-    pub async fn upload_python(&self, python_code: &str, index: Option<u32>) -> Result<bool, LimelightError> {
-        let config = self.config.read().await;
-        let url = if let Some(idx) = index {
-            format!("http://{}:{}/upload-python?index={}", config.host, config.port, idx)
-        } else {
-            format!("http://{}:{}/upload-python", config.host, config.port)
-        };
-        
-        tracing::debug!("Uploading Python code{}", if let Some(idx) = index { format!(" to index {}", idx) } else { "".to_string() });
-        let response = self.http_client
-            .post(&url)
-            .body(python_code.to_string())
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?;
-            
-        Ok(response.status().is_success())
+        self.post_json(&endpoint, &field_map).await
     }
 
     pub async fn get_calibration(&self, source: &str) -> Result<Value, LimelightError> {
-        let config = self.config.read().await;
-        let url = format!("http://{}:{}/cal-{}", config.host, config.port, source);
-        
-        tracing::debug!("Fetching calibration data from {}", source);
-        let response = self.http_client
-            .get(&url)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?
-            .json()
-            .await?;
-            
-        Ok(response)
+        self.get_json(&format!("cal-{}", source)).await
     }
 
     pub async fn get_hardware_report(&self) -> Result<Value, LimelightError> {
-        let config = self.config.read().await;
-        let url = format!("http://{}:{}/hwreport", config.host, config.port);
-        
-        tracing::debug!("Fetching hardware report");
-        let response = self.http_client
-            .get(&url)
-            .timeout(Duration::from_millis(100))
-            .send()
-            .await?
-            .json()
-            .await?;
-            
-        Ok(response)
+        self.get_json("hwreport").await
     }
 
+    // Pipeline Management
+    pub async fn get_default_pipeline(&self) -> Result<Value, LimelightError> {
+        self.get_json("pipeline-default").await
+    }
+
+    pub async fn get_pipeline_at_index(&self, index: u32) -> Result<Value, LimelightError> {
+        self.get_json(&format!("pipeline-atindex?index={}", index)).await
+    }
+
+    pub async fn update_pipeline(&self, settings: Value, flush: bool) -> Result<bool, LimelightError> {
+        self.post_json(&format!("update-pipeline?flush={}", if flush { 1 } else { 0 }), &settings).await
+    }
+
+    pub async fn upload_pipeline(&self, pipeline: Value, index: Option<u32>) -> Result<bool, LimelightError> {
+        let endpoint = match index {
+            Some(idx) => format!("upload-pipeline?index={}", idx),
+            None => "upload-pipeline".to_string(),
+        };
+        self.post_json(&endpoint, &pipeline).await
+    }
+
+    // Neural Network Management
+    pub async fn upload_neural_network(&self, nn_type: &str, data: &[u8], index: Option<u32>) -> Result<bool, LimelightError> {
+        if !["detector", "classifier"].contains(&nn_type) {
+            return Err(LimelightError::ConfigError("Invalid neural network type".into()));
+        }
+        let endpoint = match index {
+            Some(idx) => format!("upload-nn?type={}&index={}", nn_type, idx),
+            None => format!("upload-nn?type={}", nn_type),
+        };
+        let url = self.build_url(&endpoint).await;
+        
+        let response = self.http_client
+            .post(&url)
+            .body(data.to_vec())
+            .timeout(Duration::from_millis(100))
+            .send()
+            .await?;
+            
+        Ok(response.status().is_success())
+    }
+
+    pub async fn upload_neural_network_labels(&self, nn_type: &str, labels: &str, index: Option<u32>) -> Result<bool, LimelightError> {
+        if !["detector", "classifier"].contains(&nn_type) {
+            return Err(LimelightError::ConfigError("Invalid neural network type".into()));
+        }
+        let endpoint = match index {
+            Some(idx) => format!("upload-nnlabels?type={}&index={}", nn_type, idx),
+            None => format!("upload-nnlabels?type={}", nn_type),
+        };
+        let url = self.build_url(&endpoint).await;
+        
+        let response = self.http_client
+            .post(&url)
+            .body(labels.to_string())
+            .timeout(Duration::from_millis(100))
+            .send()
+            .await?;
+            
+        Ok(response.status().is_success())
+    }
+
+    // SnapScript Management
+    pub async fn get_snapscript_names(&self) -> Result<Vec<String>, LimelightError> {
+        self.get_json("getsnapsscriptnames").await
+    }
+
+    // Calibration Management
+    pub async fn get_calibration_default(&self) -> Result<Value, LimelightError> {
+        self.get_json("cal-default").await
+    }
+
+    pub async fn get_calibration_file(&self) -> Result<Value, LimelightError> {
+        self.get_json("cal-file").await
+    }
+
+    pub async fn get_calibration_eeprom(&self) -> Result<Value, LimelightError> {
+        self.get_json("cal-eeprom").await
+    }
+
+    pub async fn get_calibration_latest(&self) -> Result<Value, LimelightError> {
+        self.get_json("cal-latest").await
+    }
+
+    pub async fn update_calibration_eeprom(&self, calibration: Value) -> Result<bool, LimelightError> {
+        self.post_json("cal-eeprom", &calibration).await
+    }
+
+    pub async fn update_calibration_file(&self, calibration: Value) -> Result<bool, LimelightError> {
+        self.post_json("cal-file", &calibration).await
+    }
+
+    pub async fn delete_calibration_latest(&self) -> Result<bool, LimelightError> {
+        self.delete("cal-latest").await
+    }
+
+    pub async fn delete_calibration_eeprom(&self) -> Result<bool, LimelightError> {
+        self.delete("cal-eeprom").await
+    }
+
+    pub async fn delete_calibration_file(&self) -> Result<bool, LimelightError> {
+        self.delete("cal-file").await
+    }
+
+    // Snapshot Management
+    pub async fn upload_snapshot(&self, snapname: &str, image_data: &[u8]) -> Result<bool, LimelightError> {
+        let url = self.build_url(&format!("upload-snapshot?snapname={}", snapname)).await;
+        
+        let response = self.http_client
+            .post(&url)
+            .body(image_data.to_vec())
+            .timeout(Duration::from_millis(100))
+            .send()
+            .await?;
+            
+        Ok(response.status().is_success())
+    }
+
+    pub async fn get_snapshot_manifest(&self) -> Result<Vec<String>, LimelightError> {
+        self.get_json("snapshotmanifest").await
+    }
 }

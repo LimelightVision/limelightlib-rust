@@ -26,11 +26,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     client.start().await.map_err(|e| Box::new(e) as Box<dyn Error>)?;
 
     println!("Waiting for results...");
+
+    // Switch to pipeline 0
     client.switch_pipeline(0).await?;
+
+    // Send data to python snapcript
+    let inputs: &[f64] = &[12.0, 0.0, 2.0, 1.0];
+    let _ = client.update_python_inputs(inputs).await;
+  
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(10) {
         match results.recv().await {
             Ok(result) => {
+              
                 println!("Valid target: {}", result.v.unwrap_or(0.0) > 0.0);
                 if let Some(tx) = result.tx {
                     println!("Target X offset: {:.2}°", tx);
