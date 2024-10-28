@@ -181,31 +181,9 @@ pub enum LimelightError {
 
 ## Advanced Usage
 
-### Custom Field Map Upload
-
-Upload custom field layouts for advanced pose estimation:
-
-```rust
-use serde_json::json;
-
-let field_map = json!({
-    "tags": [
-        {
-            "id": 1,
-            "pose": {
-                "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
-                "rotation": {"roll": 0.0, "pitch": 0.0, "yaw": 0.0}
-            }
-        }
-    ]
-});
-
-client.upload_field_map(field_map, Some(0)).await?;
-```
-
 ### Python Input Updates
 
-Send custom inputs to Python pipelines:
+Send custom inputs to Python SnapScript pipelines:
 
 ```rust
 let inputs = vec![1.0, 2.0, 3.0];
@@ -214,7 +192,7 @@ client.update_python_inputs(&inputs).await?;
 
 ### Robot Orientation Updates
 
-Update robot orientation for better pose estimation:
+Update your robot orientation for better pose estimation with MegaTag2:
 
 ```rust
 client.update_robot_orientation(45.0).await?; // 45 degree yaw
