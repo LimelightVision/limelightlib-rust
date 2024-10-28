@@ -9,28 +9,46 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 limelightlib-rust = "0.1.0"
+tokio = { version = "1.0", features = ["full"] }
 ```
 
 ## Quick Start
 
 ```rust
 use limelightlib_rust::{LimelightClient, LimelightConfig};
+use tokio;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create a client with default configuration (host: "10.0.0.2", port: 5807)
-    let client = LimelightClient::new(LimelightConfig::default());
+    // Create client with custom configuration
+    let config = LimelightConfig {
+        host: "10.0.0.2".to_string(),
+        port: 5807,
+        poll_interval_ms: 20,
+    };
     
-    // Start the polling loop
+    let client = LimelightClient::new(config);
     client.start().await?;
     
-    // Subscribe to results
-    let mut rx = client.subscribe();
+    // Subscribe to vision processing results
+    let mut results = client.subscribe();
     
-    // Process incoming results
-    while let Ok(result) = rx.recv().await {
+    while let Ok(result) = results.recv().await {
+        // Process standard targeting results
         if let Some(tx) = result.tx {
-            println!("Target X offset: {}", tx);
+            println!("Target X offset: {:.2}°", tx);
+        }
+        
+        // Process AprilTag results
+        for tag in result.fiducial {
+            if let Some(id) = tag.f_id {
+                println!("Detected AprilTag ID: {}", id);
+            }
+        }
+
+        // Process MegaTag2 results
+        if let Some(botpose) = &result.botposeMT2 {
+            println!("MegaTag2 Robot Pose: {:?}", botpose);
         }
     }
     
@@ -38,134 +56,198 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Configuration
-
-```rust
-let config = LimelightConfig {
-    host: "10.0.0.2".to_string(),
-    port: 5807,
-    poll_interval_ms: 10,
-};
-let client = LimelightClient::new(config);
-```
-
-## Core Features
-
-### Result Polling
-
-The client automatically polls the Limelight device at configured intervals:
-
-```rust
-// Change polling rate
-client.set_poll_rate(20).await?; // 20ms interval
-
-// Get latest result without subscription
-if let Some(result) = client.get_latest_result().await {
-    println!("Latest target area: {:?}", result.ta);
-}
-```
+## Core Features Guide
 
 ### Vision Processing Results
 
-The library provides structured types for different vision processing results:
+Access comprehensive vision processing results:
 
 ```rust
-// Example of processing different result types
 if let Some(result) = client.get_latest_result().await {
-    // Process AprilTag/Fiducial results
-    for fiducial in result.fiducial {
-        println!("AprilTag ID: {:?}", fiducial.f_id);
-        println!("Position: tx={:?}, ty={:?}", fiducial.tx, fiducial.ty);
+    // Basic target information
+    if result.v.unwrap_or(0.0) > 0.0 {
+        println!("Valid target found!");
+        println!("X Offset: {:?}°", result.tx);
+        println!("Y Offset: {:?}°", result.ty);
+        println!("Target Area: {:?}%", result.ta);
+        
+        // Non-cross-filtered results
+        println!("X Offset (No Cross): {:?}°", result.txnc);
+        println!("Y Offset (No Cross): {:?}°", result.tync);
     }
     
-    // Process detector results (neural network detection)
-    for detection in result.detector {
-        println!("Detected class: {:?}", detection.class);
-        println!("Confidence: {:?}", detection.conf);
+    // Process barcode results
+    for barcode in &result.barcode {
+        println!("Barcode: {:?} (Family: {:?})", barcode.data, barcode.fam);
     }
     
     // Process classifier results
-    for classification in result.classifier {
-        println!("Classification: {:?}", classification.class);
-        println!("Class ID: {:?}", classification.class_id);
+    for class in &result.classifier {
+        println!("Class: {:?} (ID: {:?})", class.class, class.class_id);
+    }
+    
+    // Process detector results
+    for detection in &result.detector {
+        println!("Detection: {:?} (Conf: {:?})", detection.class, detection.conf);
     }
 }
 ```
 
 ### Pipeline Management
 
-Control and manage Limelight pipelines:
+Complete pipeline control and configuration:
 
 ```rust
-// Switch to a different pipeline
+// Basic pipeline operations
 client.switch_pipeline(1).await?;
-
-// Reload the current pipeline
 client.reload_pipeline().await?;
 
-// Upload new Python code to a pipeline
-let python_code = r#"
-def process(image):
-    # Custom processing code
-    return processed_image
-"#;
-client.upload_python(python_code, Some(0)).await?;
+// Get pipeline configurations
+let default_pipeline = client.get_default_pipeline().await?;
+let specific_pipeline = client.get_pipeline_at_index(0).await?;
+
+// Update pipeline settings
+let settings = serde_json::json!({
+    "type": "apriltag",
+    "parameters": { /* ... */ }
+});
+client.update_pipeline(settings, true).await?; // true to flush changes
+
+// Upload complete pipeline
+let pipeline = serde_json::json!({ /* pipeline config */ });
+client.upload_pipeline(pipeline, Some(0)).await?;
+```
+
+### Neural Network Management
+
+Upload and configure custom neural networks:
+
+```rust
+// Upload detector network
+let detector_data = std::fs::read("detector.tflite")?;
+client.upload_neural_network("detector", &detector_data, Some(0)).await?;
+
+// Upload classifier network
+let classifier_data = std::fs::read("classifier.tflite")?;
+client.upload_neural_network("classifier", &classifier_data, Some(0)).await?;
+
+// Upload network labels
+let labels = "class1\nclass2\nclass3";
+client.upload_neural_network_labels("detector", labels, Some(0)).await?;
+```
+
+### Camera Calibration
+
+Comprehensive calibration management:
+
+```rust
+// Get calibration data
+let default_cal = client.get_calibration_default().await?;
+let file_cal = client.get_calibration_file().await?;
+let eeprom_cal = client.get_calibration_eeprom().await?;
+let latest_cal = client.get_calibration_latest().await?;
+
+// Update calibration
+let calibration = serde_json::json!({ /* calibration data */ });
+client.update_calibration_file(calibration).await?;
+client.update_calibration_eeprom(calibration).await?;
+
+// Delete calibration data
+client.delete_calibration_latest().await?;
+client.delete_calibration_file().await?;
+client.delete_calibration_eeprom().await?;
+```
+
+
+
+### Hardware Management
+
+Access device information and status:
+
+```rust
+// Get device status and reports
+let status = client.get_status().await?;
+let hardware_report = client.get_hardware_report().await?;
 ```
 
 ### Robot Pose Estimation
 
-Access robot pose estimation data:
+Comprehensive pose estimation support:
 
 ```rust
 if let Some(result) = client.get_latest_result().await {
-    // Get robot pose in field space
-    if let Some(pose) = result.botpose {
-        println!("Robot X: {}, Y: {}, Z: {}", pose[0], pose[1], pose[2]);
-        println!("Robot Roll: {}, Pitch: {}, Yaw: {}", pose[3], pose[4], pose[5]);
+    // Standard pose estimation
+    if let Some(pose) = &result.botpose {
+        println!("Robot Pose: {:?}", pose);
     }
     
-    // Get pose quality metrics
+    // IMU-Fused MegaTag2 pose estimation (requires robot orientation updates)
+    if let Some(pose_mt2) = &result.botposeMT2 {
+        println!("MegaTag2 Pose: {:?}", pose_mt2);
+    }
+    
+    // WPI field space poses (blue/red alliance)
+    if let Some(pose_blue) = &result.botpose_wpiblue {
+        println!("WPI Blue Alliance Pose: {:?}", pose_blue);
+    }
+    
+    // Pose quality metrics
     println!("Tag Count: {:?}", result.botpose_tagcount);
+    println!("Pose Span: {:?}", result.botpose_span);
     println!("Average Distance: {:?}", result.botpose_avgdist);
+    println!("Average Area: {:?}", result.botpose_avgarea);
+}
+
+// Update robot orientation
+client.update_robot_orientation(45.0).await?;
+```
+
+### SnapScript Integration
+
+Manage Python processing pipelines:
+
+```rust
+// Get available SnapScript names
+let scripts = client.get_snapscript_names().await?;
+
+// Update Python inputs
+let inputs = vec![1.0, 2.0, 3.0];
+client.update_python_inputs(&inputs).await?;
+
+// Get Python outputs from results
+if let Some(result) = client.get_latest_result().await {
+    if let Some(outputs) = &result.python_out {
+        println!("Python outputs: {:?}", outputs);
+    }
 }
 ```
 
 ### Snapshot Management
 
-Manage Limelight snapshots:
+Comprehensive snapshot control:
 
 ```rust
-// Capture a snapshot
-client.capture_snapshot("calibration_view").await?;
-
-// Delete specific snapshot
-client.delete_snapshot("calibration_view").await?;
-
-// Delete all snapshots
-client.delete_snapshots().await?;
+// Capture and manage snapshots
+client.capture_snapshot("calibration").await?;
+client.upload_snapshot("custom_image", &image_data).await?;
+let snapshot_list = client.get_snapshot_manifest().await?;
+client.delete_snapshot("old_image").await?;
+client.delete_snapshots().await?; // Delete all
 ```
 
-### Hardware Information
+## Advanced Configuration
 
-Access device information and status:
+### Custom Poll Rate
 
 ```rust
-// Get hardware status
-let status = client.get_status().await?;
-println!("Device Status: {:?}", status);
+// Change polling rate to 50ms
+client.set_poll_rate(50).await?;
 
-// Get hardware report
-let report = client.get_hardware_report().await?;
-println!("Hardware Report: {:?}", report);
-
-// Get camera calibration
-let calibration = client.get_calibration("camera").await?;
-println!("Camera Calibration: {:?}", calibration);
+// Get current poll rate
+let current_rate = client.get_poll_rate().await;
 ```
 
-## Error Handling
-
-The library provides comprehensive error handling through the `LimelightError` enum:
+### Error Handling
 
 ```rust
 pub enum LimelightError {
@@ -179,26 +261,27 @@ pub enum LimelightError {
 }
 ```
 
-## Advanced Usage
+## Logging
 
-### Python Input Updates
-
-Send custom inputs to Python SnapScript pipelines:
+Enable debug logging:
 
 ```rust
-let inputs = vec![1.0, 2.0, 3.0];
-client.update_python_inputs(&inputs).await?;
-```
+use tracing_subscriber;
 
-### Robot Orientation Updates
-
-Update your robot orientation for better pose estimation with MegaTag2:
-
-```rust
-client.update_robot_orientation(45.0).await?; // 45 degree yaw
+tracing_subscriber::fmt()
+    .with_env_filter("limelightlib_rust=debug")
+    .init();
 ```
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## License
+
+This project is licensed under the MIT License.
+
+## See Also
+
+- [Limelight Documentation](https://docs.limelightvision.io/)
+- [Limelight Vision](https://limelightvision.io/)
